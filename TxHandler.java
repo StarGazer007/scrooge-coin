@@ -1,12 +1,20 @@
-public class TxHandler {
+import java.security.PublicKey;
+import java.util.ArrayList;
+import java.util.HashMap;
 
+
+public class TxHandler {
+    private UTXOPool pool;
+    private double totalSum;
+    
     /**
      * Creates a public ledger whose current UTXOPool (collection of unspent transaction outputs) is
      * {@code utxoPool}. This should make a copy of utxoPool by using the UTXOPool(UTXOPool uPool)
      * constructor.
      */
     public TxHandler(UTXOPool utxoPool) {
-        // IMPLEMENT THIS
+        this.pool = new UTXOPool(utxoPool);
+        this.totalSum = 0;
     }
 
     /**
@@ -19,7 +27,61 @@ public class TxHandler {
      *     values; and false otherwise.
      */
     public boolean isValidTx(Transaction tx) {
-        // IMPLEMENT THIS
+        this.totalSum = 0;
+        return validateRule1_2_3(tx) &&
+               validateRule4_5(tx);
+    }
+    
+    private boolean validateRule1_2_3(Transaction tx){
+    HashMap<UTXO, Boolean> usedUTXO = new HashMap<UTXO, Boolean>();
+
+        for (int i = 0;  i < tx.numInputs(); i++) {
+            Transaction.Input input = tx.getInput(i);
+            if (input == null) { return false; }
+
+            UTXO utxo = new UTXO(input.prevTxHash, input.outputIndex);
+            //rule number 1
+            if (this.pool.contains(utxo) == false) {
+              return false;
+            }
+
+            Transaction.Output previousTxOutput = this.pool.getTxOutput(utxo);
+            if (previousTxOutput == null) { return false; }
+
+            PublicKey publicKey = previousTxOutput.address;
+            byte[] message = tx.getRawDataToSign(i);
+            byte[] signature = input.signature;
+            
+            
+            //Rule 2
+            if (Crypto.verifySignature(publicKey, message, signature) == false) {
+              return false;
+            }
+
+            //Rule 3
+            if (usedUTXO.containsKey(utxo)) { return false; }
+
+            usedUTXO.put(utxo, true);
+
+            //saving this value for rule number 5
+            this.totalSum += previousTxOutput.value;
+        }
+
+        return true;
+    }
+    
+       private boolean validateRule4_5(Transaction tx) {
+        double outputSum = 0;
+
+        for (int i = 0;  i < tx.numOutputs(); i++) {
+            Transaction.Output output = tx.getOutput(i);
+            if (output == null) { return false; }
+            if (output.value < 0) { return false; }
+
+            outputSum += output.value;
+        }
+
+        return this.totalSum >= outputSum;
     }
 
     /**
@@ -28,7 +90,32 @@ public class TxHandler {
      * updating the current UTXO pool as appropriate.
      */
     public Transaction[] handleTxs(Transaction[] possibleTxs) {
-        // IMPLEMENT THIS
+       if (possibleTxs == null) {
+        return new Transaction[0];
+       }
+        
+       ArrayList<Transaction> validTxs = new ArrayList<>();
+        
+       for (Transaction tx : possibleTxs) {
+           if (!isValidTx(tx)) {
+               continue;
+           }
+        validTxs.add(tx);
+        
+        for (Transaction.Input input : tx.getInputs()) {
+             UTXO utxo = new UTXO(input.prevTxHash, input.outputIndex);
+                this.pool.removeUTXO(utxo);
+            }
+            byte[] txHash = tx.getHash();
+            int index = 0;
+            for (Transaction.Output output : tx.getOutputs()) {
+                UTXO utxo = new UTXO(txHash, index);
+                index += 1;
+                this.pool.addUTXO(utxo, output);
+            }
+        }
+
+        return validTxs.toArray(new Transaction[validTxs.size()]);
     }
 
 }
